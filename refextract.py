@@ -52,7 +52,7 @@ class RefExtract:
 
     def __updateCachedCite(self, cite, key, data):
         '''
-        keys are: crossref
+        keys are: crossref, smitem
         '''
         if not data:
             return
@@ -60,6 +60,7 @@ class RefExtract:
         logging.debug("Updating cite cache: %s" % fn)
         old_data = {
                 'crossref': {},
+                'smitem': {},
                 }
         if os.path.exists(fn):
             try:
@@ -122,6 +123,9 @@ class RefExtract:
         return {}
 
     def __matchCite(self, title='', cite=''):
+        if len(title) < RefExtract.MIN_TITLE_LEN:
+            logging.info("Title to short for cite matching: %s" % title)
+            return False
         r = fuzz.token_set_ratio(title.lower(), cite.lower())
         logging.debug("Matched cite ratio %d:\n---\n%s\n---\n%s\n---\n" % (r, title, cite))
         if r > RefExtract.MIN_TKS_RATIO:
@@ -147,13 +151,12 @@ class RefExtract:
         crossrefs = self.works.query(bibliographic=cite)
         for cr_i, cr in enumerate(crossrefs):
             if cr_i > 4:
-                print("Max CrossRef tries reached")
+                logging.info("Max CrossRef tries reached")
                 break
             if 'title' in cr.keys():
                 title = cr['title'][0]
                 if not self.__matchCite(title=title, cite=cite):
                     continue
-                print("Title: %s" % (title))
                 data = cr
                 break
         return data
@@ -172,10 +175,27 @@ class RefExtract:
         if 'title' in smitem.keys() and smitem['title'] and smitem['title'] != 'null':
             ref['title'] = smitem['title']
         if 'doi' in smitem.keys() and smitem['doi'] and smitem['doi'] != 'null':
-            ref['doi'] = smitem['doi']
+            ref['doi'] = "https://doi.org/%s" % smitem['doi']
         if 'url' in smitem.keys() and smitem['url'] and smitem['url'] != 'null':
             ref['url'] = smitem['url']
         return ref
+
+    def __findSemanticScholarCite(self, cite):
+        ref = self.__emptyRef()
+        smitem = self.__readCachedCite(cite, 'smitem')
+        if smitem:
+            logging.debug("Using cached semantic scholar data")
+            return self.__makeRefSemanticScholar(smitem)
+        sm_data = self.sm.searchTitle(cite)
+        smitem = {"NODATA": "NOSEMANTICSCHOLAR"}
+        for sm_entry in sm_data["data"]:
+            if self.__matchCite(cite=cite, title=sm_entry["title"]):
+                smitem = self.sm.paper(sm_entry['paperId'])
+                break
+        #logging.warn("Failed to find Zotero entry for %s" % title)
+        self.__updateCachedCite(cite, 'smitem', smitem)
+        return self.__makeRefSemanticScholar(smitem)
+
 
     def __findSemanticScholar(self, title):
         ref = self.__emptyRef()
@@ -203,11 +223,11 @@ class RefExtract:
             logging.error(json.dumps(zaitem, indent=2))
             sys.exit(1)
         try:
-            ref['doi'] = zaitem['data']['doi']
+            ref['doi'] = "https://doi.org/%s" % zaitem['data']['doi']
         except:
             pass
         try:
-            ref['url'] = zaitem[0]['data']['url']
+            ref['url'] = zaitem['data']['url']
         except:
             pass
 
@@ -268,7 +288,6 @@ class RefExtract:
         apa_html = self.za.getApa(zaKey)[0]
         apa = BeautifulSoup(apa_html, features="lxml").get_text()
         cr = self.__findCrossRef(apa)
-        print(apa)
         cr = self.works.query(bibliographic=apa)
         for xxx in cr:
             print(json.dumps(xxx, indent=2))
@@ -305,50 +324,56 @@ class RefExtract:
         P_URL = re.compile('((https?):\/\/(www\.)?[a-z0-9\.:].*(\s|$))')
         parsed_refs = {}
         for rid, cite in refs.items():
+            logging.debug("Text ref %s:\n%s\n" % (rid, cite))
             parsed_refs[rid] = self.__emptyRef()
             m = P_URL.findall(cite)
             if m:
-                print("Detected online ref:")
-                print(m[0][0])
+                logging.info("Detected online ref: %s" % m[0][0])
                 parsed_refs[rid]['url'] = m[0][0]
 
 
+            logging.info("Found title: %s" % title)
             cr = self.__findCrossRef(cite)
+            title = None
             try:
                 title = cr['title'][0]
-                if not self.__matchCite(title=title, cite=cite):
-                    continue
-                print("Title: %s" % (title))
-                parsed_refs[rid] = self.__searchTitleSmZa(title)
+                if self.__matchCite(title=title, cite=cite):
+                    logging.info("Matched cite title: %s" % (title))
+                    parsed_refs[rid] = self.__searchTitleSmZa(title)
             except:
                 pass
 
             try:
-                print("DOI: %s" % (cr['DOI']))
-                parsed_refs[rid]['doi'] = cr['DOI']
+                parsed_refs[rid]['doi'] = "https://doi.org/%s" % cr['DOI']
             except:
                 pass
+
             try:
                 for link in cr['link']:
-                    print("URL: %s" % (link["URL"]))
                     parsed_refs[rid]['url'] = cr['url']
             except:
                 pass
+
+            if not title:
+                logging.info("Could not find crossref entry, try scholar:\n%s\n" % cite)
+                ref_sm = self.__findSemanticScholarCite(cite)
+                parsed_refs[rid]['title'] = ref_sm['title']
+                parsed_refs[rid]['doi'] = ref_sm['doi']
+
 
         return parsed_refs
 
     def __getRefsAnytype(self, pdfpath, zakey, title):
         cmd = '%s -f json find --no-layout %s -' % (self.anystyle, pdfpath)
         logging.debug("Executing: %s" % cmd)
-        print("Executing: %s" % cmd)
         p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
         out = p.communicate()[0]
         refs = json.loads(out.decode('utf-8'))
 
-        #print(json.dumps(refs, indent=2))
         parsed_refs = {}
         for r in refs:
             rid = int(r['citation-number'][0])
+            logging.debug("Any ref %s:\n%s\n" % (rid, title))
             parsed_refs[rid] = self.__emptyRef()
             if 'url' in r.keys():
                 parsed_refs[rid]['url'] = r['url'][0]
@@ -365,12 +390,6 @@ class RefExtract:
     def __getRefs(self, pdfpath, zakey, title):
         refs_text = self.__getRefsText(pdfpath, zakey, title)
         refs_any = self.__getRefsAnytype(pdfpath, zakey, title)
-        print('-' * 80)
-        print("ANY")
-        print(json.dumps(refs_any, indent=2))
-        print('-' * 80)
-        print("TEXT")
-        print(json.dumps(refs_text, indent=2))
 
         parsed_refs = {}
         rids = set(refs_text.keys()).union(set(refs_any.keys()))
@@ -396,9 +415,6 @@ class RefExtract:
                 if refs_any[rid]['ckey'] and not parsed_refs[rid]['ckey']:
                     parsed_refs[rid]['ckey'] = refs_any[rid]['ckey']
 
-        print('-' * 80)
-        print("COMBINED")
-        print(json.dumps(parsed_refs, indent=2))
         return parsed_refs
 
 

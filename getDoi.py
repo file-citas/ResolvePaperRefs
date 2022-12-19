@@ -11,7 +11,7 @@ import shlex
 import logging
 import argparse
 FORMAT = "%(message)s"
-logging.basicConfig(format=FORMAT, level=logging.DEBUG)
+logging.basicConfig(format=FORMAT, level=logging.WARNING)
 
 FUZZ_THRESH = 80
 
@@ -155,7 +155,7 @@ for ref_id, ref in refs.items():
         ref2ckey[ref_id] = "Reading notes/" + ckey + ".md"
     logging.warning("REF2CKEY: %d\t%s" % (ref_id, ckey))
     ref2url[ref_id] = url
-    ref2alt[ref_id] = "REF_%d" % ref_id
+    ref2alt[ref_id] = "REF_%d:%s" % (ref_id, title)
 
 P_REFS_TEST = re.compile("(\[(.*?)\])")
 refs_replace = {}
