@@ -292,8 +292,27 @@ class RefExtract:
         for xxx in cr:
             print(json.dumps(xxx, indent=2))
 
-    def __getRefsText(self, pdfpath, zakey, title):
-        P_MATCH_CITE = re.compile("(^\W*\[(\d+)\])")
+    def __refTextToKey(self, ref):
+        ref = ref.replace(", and", ", ")
+        ref = ref.replace("and", ",")
+        ref = ref.replace(", ", ",")
+        parts = ref.split('.')
+        logging.debug("Parse ref: %s" % ref)
+        year = parts[-2].lstrip().rstrip()
+        logging.debug("Parse year: %s" % year)
+        parts_auth = '.'.join(parts[:-2]).split(',')
+        logging.debug(parts_auth)
+        try:
+            if len(parts_auth) == 1:
+                return parts_auth[0].lstrip().rstrip().split(' ')[-1] + " " + year
+            if len(parts_auth) == 2:
+                return " and ".join(map(lambda t: t.lstrip().rstrip().split(' ')[-1], parts_auth)) + " " + year
+            return parts_auth[0].lstrip().rstrip().split(' ')[-1] + " et al. " + year
+        except:
+            return "BrokenRef"
+
+    def __getRefsText2(self, pdfpath, zakey, title, refkeys):
+        P_MATCH_CITE2 = re.compile("(^(\w+\.?[\s|,|and|, and]?[\s|\.])+\s\d{4}\.)")
         logging.getLogger("pdfminer").setLevel(logging.WARNING)
         text = extract_text(pdfpath)
         lines = text.split('\n')
@@ -305,21 +324,25 @@ class RefExtract:
         while i < len(lines):
             line = lines[i].rstrip()
             i+=1
-            if self.refstop in line:
+            if self.refstop.lower() in line.lower():
                 break
             if started:
-                m = P_MATCH_CITE.findall(line)
+                m = P_MATCH_CITE2.findall(line)
                 if m:
+                    logging.debug(m)
                     if len(ref) > 0:
-                        refs[rid] = " ".join(ref).replace("[%d]" % rid, "").replace("  ", " ").lstrip().rstrip().rstrip('.')
+                        if rid in refkeys:
+                            refs[rid] = " ".join(ref).replace("[%s]" % str(rid), "").replace("  ", " ").lstrip().rstrip().rstrip('.')
                         ref = []
-                    rid = int(m[0][1])
+                    #rid = int(m[0][1])
+                    rid = self.__refTextToKey(m[0][0])
+                    logging.debug("Found refid: %s", rid)
                 if rid is not None:
                     ref.append(line.rstrip('-'))
-            if line.startswith(self.refstart):
+            if line.lower().startswith(self.refstart.lower()):
                 started = True
-        if len(ref) > 0:
-            refs[rid] = " ".join(ref).replace("[%d]" % rid, "").replace("  ", " ").lstrip().rstrip().rstrip('.')
+        if len(ref) > 0 and rid in refkeys:
+            refs[rid] = " ".join(ref).replace("[%s]" % str(rid), "").replace("  ", " ").lstrip().rstrip().rstrip('.')
 
         P_URL = re.compile('((https?):\/\/(www\.)?[a-z0-9\.:].*(\s|$))')
         parsed_refs = {}
@@ -363,7 +386,83 @@ class RefExtract:
 
         return parsed_refs
 
-    def __getRefsAnytype(self, pdfpath, zakey, title):
+
+
+    def __getRefsText(self, pdfpath, zakey, title, refkeys):
+        P_MATCH_CITE = re.compile("(^\W*\[(\d+)\])")
+        logging.getLogger("pdfminer").setLevel(logging.WARNING)
+        text = extract_text(pdfpath)
+        lines = text.split('\n')
+        started = False
+        rid = None
+        refs = {}
+        ref = []
+        i = 0
+        while i < len(lines):
+            line = lines[i].rstrip()
+            i+=1
+            if self.refstop.lower() in line.lower():
+                break
+            if started:
+                m = P_MATCH_CITE.findall(line)
+                if m:
+                    logging.debug(m)
+                    if len(ref) > 0:
+                        if rid in refkeys:
+                            refs[rid] = " ".join(ref).replace("[%s]" % str(rid), "").replace("  ", " ").lstrip().rstrip().rstrip('.')
+                        ref = []
+                    rid = int(m[0][1])
+                    logging.debug("Found refid: %s", rid)
+                if rid is not None:
+                    ref.append(line.rstrip('-'))
+            if line.lower().startswith(self.refstart.lower()):
+                started = True
+        if len(ref) > 0 and rid in refkeys:
+            refs[rid] = " ".join(ref).replace("[%s]" % str(rid), "").replace("  ", " ").lstrip().rstrip().rstrip('.')
+
+        P_URL = re.compile('((https?):\/\/(www\.)?[a-z0-9\.:].*(\s|$))')
+        parsed_refs = {}
+        for rid, cite in refs.items():
+            logging.debug("Text ref %s:\n%s\n" % (rid, cite))
+            parsed_refs[rid] = self.__emptyRef()
+            m = P_URL.findall(cite)
+            if m:
+                logging.info("Detected online ref: %s" % m[0][0])
+                parsed_refs[rid]['url'] = m[0][0]
+
+
+            logging.info("Found title: %s" % title)
+            cr = self.__findCrossRef(cite)
+            title = None
+            try:
+                title = cr['title'][0]
+                if self.__matchCite(title=title, cite=cite):
+                    logging.info("Matched cite title: %s" % (title))
+                    parsed_refs[rid] = self.__searchTitleSmZa(title)
+            except:
+                pass
+
+            try:
+                parsed_refs[rid]['doi'] = "https://doi.org/%s" % cr['DOI']
+            except:
+                pass
+
+            try:
+                for link in cr['link']:
+                    parsed_refs[rid]['url'] = cr['url']
+            except:
+                pass
+
+            if not title:
+                logging.info("Could not find crossref entry, try scholar:\n%s\n" % cite)
+                ref_sm = self.__findSemanticScholarCite(cite)
+                parsed_refs[rid]['title'] = ref_sm['title']
+                parsed_refs[rid]['doi'] = ref_sm['doi']
+
+
+        return parsed_refs
+
+    def __getRefsAnytype(self, pdfpath, zakey, title, refkeys):
         cmd = '%s -f json find --no-layout %s -' % (self.anystyle, pdfpath)
         logging.debug("Executing: %s" % cmd)
         p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
@@ -372,7 +471,14 @@ class RefExtract:
 
         parsed_refs = {}
         for r in refs:
-            rid = int(r['citation-number'][0])
+            try:
+                rid = int(r['citation-number'][0])
+            except Exception as e:
+                logging.error("Anyref is broken")
+                logging.error(json.dumps(r, indent=2))
+                continue
+            if rid not in refkeys:
+                continue
             logging.debug("Any ref %s:\n%s\n" % (rid, title))
             parsed_refs[rid] = self.__emptyRef()
             if 'url' in r.keys():
@@ -387,9 +493,10 @@ class RefExtract:
 
         return parsed_refs
 
-    def __getRefs(self, pdfpath, zakey, title):
-        refs_text = self.__getRefsText(pdfpath, zakey, title)
-        refs_any = self.__getRefsAnytype(pdfpath, zakey, title)
+    def __getRefs(self, pdfpath, zakey, title, refkeys):
+        #refs_text = self.__getRefsText(pdfpath, zakey, title, refkeys)
+        refs_text = self.__getRefsText2(pdfpath, zakey, title, refkeys)
+        refs_any = self.__getRefsAnytype(pdfpath, zakey, title, refkeys)
 
         parsed_refs = {}
         rids = set(refs_text.keys()).union(set(refs_any.keys()))
@@ -439,7 +546,7 @@ class RefExtract:
         #        sys.exit(1)
         #return pout
 
-    def extractRefs(self, pdfpath, zakey, title):
+    def extractRefs(self, pdfpath, zakey, title, refkeys):
         pdfpath_tmp = self.create_temporary_copy(pdfpath)
         #refpath = os.path.join(self.rcache, hashlib.md5(title.lower().encode()).hexdigest())
         #logging.debug("refpath: " + refpath)
@@ -447,7 +554,7 @@ class RefExtract:
         #    logging.debug("Loading ref data from %s" % refpath)
         #    refs = json.loads(open(refpath, "r").read().replace("\\u201d", "\\\""))
         #else:
-        refs = self.__getRefs(pdfpath_tmp, zakey, title)
+        refs = self.__getRefs(pdfpath_tmp, zakey, title, refkeys)
         #logging.debug("Storing ref data to %s" % refpath)
         #open(refpath, "w").write(json.dumps(refs, sort_keys=True, indent=2))
         logging.debug("Parse references for '%s'" % pdfpath)
