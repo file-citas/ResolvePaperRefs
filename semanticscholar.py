@@ -10,7 +10,8 @@ from ratelimit import limits, sleep_and_retry
 from tenacity import (retry,
                       wait_fixed,
                       retry_if_exception_type,
-                      stop_after_attempt)
+                      stop_after_attempt,
+                      RetryError)
 
 
 class SemanticScholar:
@@ -112,12 +113,14 @@ class SemanticScholar:
 
         return data
 
+    # The API allows up to 100 requests per 5 minutes
     @sleep_and_retry
-    @limits(calls=1, period=timedelta(seconds=10).total_seconds())
+    @limits(calls=1, period=timedelta(seconds=72).total_seconds())
     @retry(
-        wait=wait_fixed(240),
-        retry=(retry_if_exception_type(ConnectionRefusedError) | retry_if_exception_type(PermissionError) | retry_if_exception_type(TimeoutError)),
-        stop=stop_after_attempt(10)
+        wait=wait_fixed(310),
+        #retry=(retry_if_exception_type(ConnectionRefusedError) | retry_if_exception_type(PermissionError) | retry_if_exception_type(TimeoutError)),
+        retry=( retry_if_exception_type(PermissionError) | retry_if_exception_type(TimeoutError)),
+        stop=stop_after_attempt(2)
     )
     def __get_data(
                 self,
@@ -144,10 +147,12 @@ class SemanticScholar:
             if include_unknown_refs:
                 url += '?include_unknown_references=true'
         else:
-            url = '{}/{}?query={}&limit=10&fields=title'.format(self.api_search_url, method, id)
+            url = '{}/{}?query={}&limit=2&fields=title'.format(self.api_search_url, method, id)
 
 
+        logging.warn(url)
         r = requests.get(url, timeout=self.timeout, headers=self.auth_header)
+        logging.warn("Semantic status code %d" % r.status_code)
 
         if r.status_code == 200:
             data = r.json()
@@ -156,7 +161,8 @@ class SemanticScholar:
         elif r.status_code == 403:
             raise PermissionError('HTTP status 403 Forbidden.')
         elif r.status_code == 429:
-            raise ConnectionRefusedError('HTTP status 429 Too Many Requests.')
+            #raise ConnectionRefusedError('HTTP status 429 Too Many Requests.')
+            raise RetryError()
         elif r.status_code == 504:
             raise TimeoutError('HTTP status 504 Connection Timeout.')
 

@@ -15,6 +15,7 @@ from fuzzywuzzy import fuzz
 from fuzzywuzzy import process
 from crossref.restful import Works, Etiquette
 from pdfminer.high_level import extract_text
+import tenacity
 
 class RefExtract:
     MIN_TITLE_LEN = 16
@@ -186,14 +187,19 @@ class RefExtract:
         if smitem:
             logging.debug("Using cached semantic scholar data")
             return self.__makeRefSemanticScholar(smitem)
-        sm_data = self.sm.searchTitle(cite)
+        try:
+            sm_data = self.sm.searchTitle(cite)
+            smitem = {"NODATA": "NOSEMANTICSCHOLAR"}
+            for sm_entry in sm_data["data"]:
+                if self.__matchCite(cite=cite, title=sm_entry["title"]):
+                    smitem = self.sm.paper(sm_entry['paperId'])
+                    break
+            #logging.warn("Failed to find Zotero entry for %s" % title)
+            self.__updateCachedCite(cite, 'smitem', smitem)
+            return self.__makeRefSemanticScholar(smitem)
+        except tenacity.RetryError or ConnectionRefusedError:
+            logging.warn("Semantic Scholar issues on cite %s" % cite)
         smitem = {"NODATA": "NOSEMANTICSCHOLAR"}
-        for sm_entry in sm_data["data"]:
-            if self.__matchCite(cite=cite, title=sm_entry["title"]):
-                smitem = self.sm.paper(sm_entry['paperId'])
-                break
-        #logging.warn("Failed to find Zotero entry for %s" % title)
-        self.__updateCachedCite(cite, 'smitem', smitem)
         return self.__makeRefSemanticScholar(smitem)
 
 
@@ -203,14 +209,19 @@ class RefExtract:
         if smitem:
             logging.debug("Using cached semantic scholar data")
             return self.__makeRefSemanticScholar(smitem)
-        sm_data = self.sm.searchTitle(title)
+        try:
+            sm_data = self.sm.searchTitle(title)
+            smitem = {"NODATA": "NOSEMANTICSCHOLAR"}
+            for sm_entry in sm_data["data"]:
+                if self.__matchTitle(title, sm_entry["title"]):
+                    smitem = self.sm.paper(sm_entry['paperId'])
+                    break
+            #logging.warn("Failed to find Zotero entry for %s" % title)
+            self.__updateCachedTitle(title, 'smitem', smitem)
+            return self.__makeRefSemanticScholar(smitem)
+        except tenacity.RetryError or ConnectionRefusedError:
+            logging.warn("Semantic Scholar issues on title %s" % title)
         smitem = {"NODATA": "NOSEMANTICSCHOLAR"}
-        for sm_entry in sm_data["data"]:
-            if self.__matchTitle(title, sm_entry["title"]):
-                smitem = self.sm.paper(sm_entry['paperId'])
-                break
-        #logging.warn("Failed to find Zotero entry for %s" % title)
-        self.__updateCachedTitle(title, 'smitem', smitem)
         return self.__makeRefSemanticScholar(smitem)
 
     def __makeRefZotero(self, zaitem):
@@ -252,6 +263,10 @@ class RefExtract:
             logging.warn("Skipping potentially broken title: \"%s\"" % title)
             return self.__emptyRef()
         ref_za = self.__findZotero(title)
+        # just don't even try sm if za is already found
+        if ref_za['title']:
+            logging.warn("Found ZA: %s" % ref_za['title'])
+            return ref_za
         ref_sm = self.__findSemanticScholar(title)
 
         if ref_sm['title'] and not ref_za['title']:

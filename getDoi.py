@@ -100,13 +100,14 @@ def getAnnotRefKeys2(annot):
     return refkeys, refkeyMarks, refkeyExpand
 
 
-P_REFS_TEST = re.compile("(\[(([1-9][0-9]*\s?[,-]?\s?)+)\])")
+P_REFS_TEST = re.compile("(\[(([1-9][0-9]{0,2}\s?[,-]?\s?)+)\])")
 def getAnnotRefKeys(annot):
     refkeys = set()
     refkeyMarks = set()
     refkeyExpand = {}
     refs_replace = {}
     annot = " ".join(annot.splitlines())
+    annot = annot.replace('–', '-')
     refs = P_REFS_TEST.findall(annot)
     for ref_group in refs:
         refstr0 = ref_group[0]
