@@ -43,6 +43,7 @@ class RefExtract:
                     'doi': None,
                     'url': None,
                     'ckey': None,
+                    'cite': None,
                     }
 
 
@@ -123,10 +124,30 @@ class RefExtract:
             pass
         return {}
 
+    def __brokenCite(self, title):
+        title = title.lower()
+        if 'usenix' in title:
+            return True
+        if 'symposium' in title:
+            return True
+        return False
+
     def __matchCite(self, title='', cite=''):
         if len(title) < RefExtract.MIN_TITLE_LEN:
-            logging.info("Title to short for cite matching: %s" % title)
+            logging.info("Title too short for cite matching: %s" % title)
             return False
+        if self.__brokenCite(title):
+            logging.info("Title probably broken: %s" % title)
+            return False
+
+        # Efficient software-based fault isolation
+        # Efﬁcient Software-based Fault Iso-lation
+        # match ratio: 67 :(
+        title = title.replace('-', '')
+        # NOT THE SAME CHAR!
+        title = title.replace('-', '')
+        cite = cite.replace('-', '')
+        cite = cite.replace('-', '')
         r = fuzz.token_set_ratio(title.lower(), cite.lower())
         logging.debug("Matched cite ratio %d:\n---\n%s\n---\n%s\n---\n" % (r, title, cite))
         if r > RefExtract.MIN_TKS_RATIO:
@@ -138,6 +159,14 @@ class RefExtract:
         t0 = re.sub('[\W_]+', '', t0)
         t1 = t1.lower()
         t1 = re.sub('[\W_]+', '', t1)
+        # Efficient software-based fault isolation
+        # Efﬁcient Software-based Fault Iso-lation
+        # match ratio: 67 :(
+        t0 = t0.replace('-', '')
+        # NOT THE SAME CHAR!
+        t0 = t0.replace('-', '')
+        t1 = t1.replace('-', '')
+        t1 = t1.replace('-', '')
         r = fuzz.ratio(t0.lower(), t1.lower())
         logging.debug("Matched title ratio %d:\n---\n%s\n---\n%s\n---\n" % (r, t0, t1))
         if r > RefExtract.MIN_RATIO:
@@ -190,10 +219,11 @@ class RefExtract:
         try:
             sm_data = self.sm.searchTitle(cite)
             smitem = {"NODATA": "NOSEMANTICSCHOLAR"}
-            for sm_entry in sm_data["data"]:
-                if self.__matchCite(cite=cite, title=sm_entry["title"]):
-                    smitem = self.sm.paper(sm_entry['paperId'])
-                    break
+            if "data" in sm_data.keys():
+                for sm_entry in sm_data["data"]:
+                    if self.__matchCite(cite=cite, title=sm_entry["title"]):
+                        smitem = self.sm.paper(sm_entry['paperId'])
+                        break
             #logging.warn("Failed to find Zotero entry for %s" % title)
             self.__updateCachedCite(cite, 'smitem', smitem)
             return self.__makeRefSemanticScholar(smitem)
@@ -307,82 +337,183 @@ class RefExtract:
         for xxx in cr:
             print(json.dumps(xxx, indent=2))
 
+    def __parseRefYear(self, ref):
+        year = 0
+        year_res = [
+                re.compile('\s?(19\d\d)\.?'),
+                re.compile('\s?(20\d\d)\.?')
+                ]
+        for yr in year_res:
+            m_year = yr.findall(ref)
+            try:
+                year = int(m_year[0])
+            except:
+                continue
+        if year > 0:
+            logging.debug("Found year: %d" % year)
+        else:
+            logging.error("Failed to parse year: %s" % ref)
+        return year
+
+    def __parseRefAuthor(self, ref):
+        MIN_AUTH_LEN = 5
+        auth = ""
+        auth_res = [
+                #Sidney Amani, Alex Hixon, Zilin Chen, Christine Rizkallah, Peter Chubb, Liam OConnor, Joel Beeren, Yutaka Nagashima, Japheth Lim, Thomas Sewell, Joseph Tuong, Gabriele Keller, Toby Murray, Gerwin Klein, and Gernot Heiser
+                re.compile("(^([\w+\s\w\+,(\sand)?\s]+))"),
+                # B. N. Bershad, S. Savage, P. Pardyak, E. G. Sirer, M. E. Fiuczynski, D. Becker, C. Chambers, and S. Eggers. Extensibility Safety and Performance in the SPIN Operating System. In Proceedings of the 15th ACM Symposium on Operating Systems Principles (SOSP ’95), page 267–283, 1995.
+                re.compile("(^((\w\.\s)+\w+[,|\.](\sand)?\s)+)"),
+                re.compile("(^(\w+\.?[\s|,|and|, and]?[\s|\.])\.)"),
+                re.compile("^(\w+\.?[\s?|,|and|, and]?[\s|\.])+\s\d{4}\."),
+                ]
+        for ar in auth_res:
+            m_auth = ar.findall(ref)
+            if m_auth and len(m_auth[0][0]) > MIN_AUTH_LEN:
+                auth = m_auth[0][0]
+                break
+        if auth:
+            logging.debug("Found Authors: %s" % auth)
+        else:
+            logging.error("Failed to parse authors: %s" % ref)
+        return auth
+
     def __refTextToKey(self, ref):
-        ref = ref.replace(", and", ", ")
-        ref = ref.replace("and", ",")
-        ref = ref.replace(", ", ",")
-        parts = ref.split('.')
+        """
+        parse citation line extracted with __getReferences.
+        e.g.: "Teresa Johnson. 2016. ThinLTO: Scalable and Incremental LTO.blog.llvm.org/2016/06/thinlto-scalable-and-incremental-lto.html.http://
+        extract authors and year
+        returns citekey: Johnson 2016 (or et. al ... if there are more authors)
+        """
         logging.debug("Parse ref: %s" % ref)
-        year = parts[-2].lstrip().rstrip()
-        logging.debug("Parse year: %s" % year)
-        parts_auth = '.'.join(parts[:-2]).split(',')
-        logging.debug(parts_auth)
+        auth = self.__parseRefAuthor(ref)
+        year = self.__parseRefYear(ref)
+        if not auth or year == 0:
+            logging.error("Failed to parse ref: %s" % ref)
         try:
+            parts_auth = auth.split(",")
             if len(parts_auth) == 1:
-                return parts_auth[0].lstrip().rstrip().split(' ')[-1] + " " + year
+                return parts_auth[0].lstrip().rstrip().split(' ')[-1] + " " + str(year)
             if len(parts_auth) == 2:
                 return " and ".join(map(lambda t: t.lstrip().rstrip().split(' ')[-1], parts_auth)) + " " + year
-            return parts_auth[0].lstrip().rstrip().split(' ')[-1] + " et al. " + year
-        except:
+            return parts_auth[0].lstrip().rstrip().split(' ')[-1] + " et al. " + str(year)
+        except Exception as e:
+            logging.error(e)
+            logging.error("Failed to extract authors from: %s" % auth)
             return "BrokenRef"
 
-    def __getRefsText2(self, pdfpath, zakey, title, refkeys):
-        P_MATCH_CITE2 = re.compile("(^(\w+\.?[\s|,|and|, and]?[\s|\.])+\s\d{4}\.)")
+    def __getReferences(self, pdfpath):
+        """
+        scan pdf text for line starting with '[1] '
+        concatenate text from that point to the end of paper or 'Appendix'
+        split extracted text at '[\d+]'
+        returns dict [refid] -> citation line
+        """
+        P_MATCH_REFIDX = re.compile('\[(\d+)\]')
         logging.getLogger("pdfminer").setLevel(logging.WARNING)
         text = extract_text(pdfpath)
         lines = text.split('\n')
         started = False
-        rid = None
-        refs = {}
-        ref = []
-        i = 0
-        while i < len(lines):
+        reftext = ""
+        i=0
+        while i<len(lines):
             line = lines[i].rstrip()
             i+=1
+            if line.startswith('[1] '):
+                started = True
+            if started:
+                reftext += line
             if self.refstop.lower() in line.lower():
                 break
-            if started:
-                m = P_MATCH_CITE2.findall(line)
-                if m:
-                    logging.debug(m)
-                    if len(ref) > 0:
-                        if rid in refkeys:
-                            refs[rid] = " ".join(ref).replace("[%s]" % str(rid), "").replace("  ", " ").lstrip().rstrip().rstrip('.')
-                        ref = []
-                    #rid = int(m[0][1])
-                    rid = self.__refTextToKey(m[0][0])
-                    logging.debug("Found refid: %s", rid)
-                if rid is not None:
-                    ref.append(line.rstrip('-'))
-            if line.lower().startswith(self.refstart.lower()):
-                started = True
-        if len(ref) > 0 and rid in refkeys:
-            refs[rid] = " ".join(ref).replace("[%s]" % str(rid), "").replace("  ", " ").lstrip().rstrip().rstrip('.')
+        reflines = re.split('(\[\d+\] )', reftext)
+        i=0
+        refs = {}
+        while i<len(reflines)-1:
+            line = reflines[i]
+            m = P_MATCH_REFIDX.match(line)
+            #if line.startswith('['):
+            if m:
+                refs[int(m.groups()[0])] = reflines[i+1]
+                i+=1
+            i+=1
+        logging.debug(json.dumps(refs, indent=2))
+        return refs
+
+    def __getRefsText2(self, pdfpath, zakey, title, refkeys):
+        # year + author
+        MIN_RKEY_LEN = 8
+        pdf_refs = self.__getReferences(pdfpath)
+        refs = {}
+        logging.debug(refkeys)
+        for rid, rtext in pdf_refs.items():
+            if int(rid) not in refkeys:
+                logging.debug("Skip rid %s" % rid)
+                continue
+            #rkey = self.__refTextToKey(rtext)
+            #if len(rkey) < MIN_RKEY_LEN:
+            #    continue
+            rkey = rid
+            refs[rkey] = rtext
+            logging.debug("Text Reference: %s -> %s" % (rkey, rtext))
+        #P_MATCH_CITE2 = re.compile("(^(\w+\.?[\s|,|and|, and]?[\s|\.])+\s\d{4}\.)")
+        #logging.getLogger("pdfminer").setLevel(logging.WARNING)
+        #text = extract_text(pdfpath)
+        #lines = text.split('\n')
+        #started = False
+        #rid = None
+        #refs = {}
+        #ref = []
+        #i = 0
+        #while i < len(lines):
+        #    line = lines[i].rstrip()
+        #    i+=1
+        #    if self.refstop.lower() in line.lower():
+        #        break
+        #    if started:
+        #        m = P_MATCH_CITE2.findall(line)
+        #        if m:
+        #            print(line)
+        #            logging.debug(m)
+        #            if len(ref) > 0:
+        #                if rid in refkeys:
+        #                    refs[rid] = " ".join(ref).replace("[%s]" % str(rid), "").replace("  ", " ").lstrip().rstrip().rstrip('.')
+        #                ref = []
+        #            #rid = int(m[0][1])
+        #            print(m[0][0])
+        #            rid = self.__refTextToKey(m[0][0])
+        #            print("RID " + rid)
+        #            logging.debug("Found refid: %s", rid)
+        #        if rid is not None:
+        #            ref.append(line.rstrip('-'))
+        #    if line.lower().startswith(self.refstart.lower()):
+        #        started = True
+        #if len(ref) > 0 and rid in refkeys:
+        #    refs[rid] = " ".join(ref).replace("[%s]" % str(rid), "").replace("  ", " ").lstrip().rstrip().rstrip('.')
 
         P_URL = re.compile('((https?):\/\/(www\.)?[a-z0-9\.:].*(\s|$))')
         parsed_refs = {}
         for rid, cite in refs.items():
-            logging.debug("Text ref %s:\n%s\n" % (rid, cite))
+            logging.debug("Text ref %s:\n\t%s\n" % (rid, cite))
             parsed_refs[rid] = self.__emptyRef()
+            parsed_refs[rid]['cite'] = cite
             m = P_URL.findall(cite)
             if m:
                 logging.info("Detected online ref: %s" % m[0][0])
                 parsed_refs[rid]['url'] = m[0][0]
 
-
-            logging.info("Found title: %s" % title)
             cr = self.__findCrossRef(cite)
             title = None
             try:
                 title = cr['title'][0]
+                logging.debug("Found title (crossref): %s" % title)
                 if self.__matchCite(title=title, cite=cite):
-                    logging.info("Matched cite title: %s" % (title))
+                    logging.info("Matched title (crossref): %s" % (title))
                     parsed_refs[rid] = self.__searchTitleSmZa(title)
             except:
                 pass
 
             try:
                 parsed_refs[rid]['doi'] = "https://doi.org/%s" % cr['DOI']
+                logging.info("Found doi (crossref): %s" % parsed_refs[rid]['doi'])
             except:
                 pass
 
@@ -398,9 +529,8 @@ class RefExtract:
                 parsed_refs[rid]['title'] = ref_sm['title']
                 parsed_refs[rid]['doi'] = ref_sm['doi']
 
-
+        logging.debug(json.dumps(parsed_refs, indent=2))
         return parsed_refs
-
 
 
     def __getRefsText(self, pdfpath, zakey, title, refkeys):
@@ -451,6 +581,7 @@ class RefExtract:
             title = None
             try:
                 title = cr['title'][0]
+                logging.debug("Found title (crossref): %s" % title)
                 if self.__matchCite(title=title, cite=cite):
                     logging.info("Matched cite title: %s" % (title))
                     parsed_refs[rid] = self.__searchTitleSmZa(title)
@@ -473,7 +604,6 @@ class RefExtract:
                 ref_sm = self.__findSemanticScholarCite(cite)
                 parsed_refs[rid]['title'] = ref_sm['title']
                 parsed_refs[rid]['doi'] = ref_sm['doi']
-
 
         return parsed_refs
 
@@ -516,8 +646,10 @@ class RefExtract:
         parsed_refs = {}
         rids = set(refs_text.keys()).union(set(refs_any.keys()))
         for rid in rids:
+            logging.debug("Merge Refs for id: %s" % rid)
             parsed_refs[rid] = self.__emptyRef()
             if rid in refs_text.keys():
+                logging.debug("Merge Refs from Text for id: %s" % rid)
                 if refs_text[rid]['title']:
                     parsed_refs[rid]['title'] = refs_text[rid]['title']
                 if refs_text[rid]['doi']:
@@ -526,8 +658,11 @@ class RefExtract:
                     parsed_refs[rid]['url'] = refs_text[rid]['url']
                 if refs_text[rid]['ckey']:
                     parsed_refs[rid]['ckey'] = refs_text[rid]['ckey']
+                if refs_text[rid]['cite']:
+                    parsed_refs[rid]['cite'] = refs_text[rid]['cite']
 
             if rid in refs_any.keys():
+                logging.debug("Merge Refs from Any for id: %s" % rid)
                 if refs_any[rid]['title'] and not parsed_refs[rid]['title']:
                     parsed_refs[rid]['title'] = refs_any[rid]['title']
                 if refs_any[rid]['doi'] and not parsed_refs[rid]['doi']:

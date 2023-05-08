@@ -11,7 +11,7 @@ import shlex
 import logging
 import argparse
 FORMAT = "%(message)s"
-logging.basicConfig(format=FORMAT, level=logging.WARNING)
+logging.basicConfig(format=FORMAT, level=logging.INFO)
 
 FUZZ_THRESH = 80
 refkeyMark0="RK"
@@ -184,8 +184,9 @@ ref2alt = {}
 ref2url = {}
 ref2info = {}
 for ref_id, ref in refs.items():
-    print(json.dumps(ref))
+    #print(json.dumps(ref))
     if ref_id not in refkeys:
+        logging.error("Unknown refid: %s" % ref_id)
         continue
     logging.info("." * 80)
     logging.info("ID  : %s" % str(ref_id))
@@ -193,10 +194,12 @@ for ref_id, ref in refs.items():
     doi = ref['doi']
     url = ref['url']
     ckey = ref['ckey']
+    cite = ref['cite']
     logging.info('TITL: "%s"' % title)
     logging.info("DOI : %s" % doi)
     logging.info("URL : %s" % url)
     logging.info("CKEY: %s" % ckey)
+    logging.info("CITE: %s" % cite)
     ref2info[ref_id] = ref
     if ckey:
         ref2ckey[ref_id] = "Reading notes/" + ckey + ".md"
@@ -216,6 +219,10 @@ for refid in refkeys:
         annot = annot.replace(refMark, '[[%s]]' % ref2ckey[refid])
     elif refid in ref2url.keys():
         annot = annot.replace(refMark, '[%s](%s)' % (ref2alt[refid], ref2url[refid]))
+        if refid not in nrprinted:
+            logging.warning("UPDATE  %s -> \n%s" % (str(refid), json.dumps(ref2info[refid], indent=2)))
+            nrprinted.add(refid)
+    elif refid in ref2info.keys():
         if refid not in nrprinted:
             logging.warning("UPDATE  %s -> \n%s" % (str(refid), json.dumps(ref2info[refid], indent=2)))
             nrprinted.add(refid)

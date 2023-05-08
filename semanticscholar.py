@@ -162,7 +162,7 @@ class SemanticScholar:
             raise PermissionError('HTTP status 403 Forbidden.')
         elif r.status_code == 429:
             #raise ConnectionRefusedError('HTTP status 429 Too Many Requests.')
-            raise RetryError()
+            raise RetryError(last_attempt=True)
         elif r.status_code == 504:
             raise TimeoutError('HTTP status 504 Connection Timeout.')
 
