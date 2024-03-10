@@ -11,7 +11,7 @@ import shlex
 import logging
 import argparse
 FORMAT = "%(message)s"
-logging.basicConfig(format=FORMAT, level=logging.INFO)
+logging.basicConfig(format=FORMAT, level=logging.DEBUG)
 
 FUZZ_THRESH = 80
 refkeyMark0="RK"
@@ -133,6 +133,7 @@ def getAnnotRefKeys(annot):
 
 parser = argparse.ArgumentParser(description='Update Annot Refs')
 parser.add_argument('-t','--title', help='Paper Title', required=True)
+#parser.add_argument('-ck','--ckey', help='Better Bibtex Citation Key', required=False)
 parser.add_argument('-a','--annot', help='Annotation File', required=True)
 parser.add_argument('-o','--output', help='Output file', required=True)
 parser.add_argument('-f','--format', help='Citation Format (1: normal, 2: text)', choices=["1", "2"])
@@ -155,6 +156,13 @@ args = parser.parse_args()
 #sys.exit(1)
 
 za = ZotApi(args.libcsv, args.libid, args.libtype, args.apikey)
+#TODO
+#print(args.ckey)
+#if(args.ckey):
+#    item = za.getItemByCKey(args.ckey)
+#    print("XXXXXXXXXXXXXXX")
+#    print(item)
+#sys.exit(1)
 baseZaKeys = za.getItemIdByFuzzyTitle(args.title)
 if len(baseZaKeys) == 0:
     logging.error("Can not find title '%s'" % args.title)

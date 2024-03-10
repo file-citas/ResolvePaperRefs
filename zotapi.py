@@ -107,6 +107,10 @@ class ZotApi:
     def getItemByKey(self, key):
         return self.zot.top(itemKey=key)
 
+    #TODO
+    #def getItemByCKey(self, key):
+    #    return self.zot.top(q=key)
+
     def findItem(self, key=None, doi=None, title=None, url=None):
         ret = []
         if key is not None:

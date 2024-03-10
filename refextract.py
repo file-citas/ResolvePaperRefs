@@ -28,6 +28,7 @@ class RefExtract:
         self.anystyle = anystyle
         self.refstart = refstart
         self.refstop = refstop
+        self.refstop2 = "additional results"
         etq = Etiquette('Replace citations with zotero betterbibtex keys', 'v0.1', 'no url just testing', 'felicitashetzelt@gmail.com')
         self.cache_by_title = cache_by_title
         if not os.path.isdir(self.cache_by_title):
@@ -242,10 +243,14 @@ class RefExtract:
         try:
             sm_data = self.sm.searchTitle(title)
             smitem = {"NODATA": "NOSEMANTICSCHOLAR"}
-            for sm_entry in sm_data["data"]:
-                if self.__matchTitle(title, sm_entry["title"]):
-                    smitem = self.sm.paper(sm_entry['paperId'])
-                    break
+            try:
+                for sm_entry in sm_data["data"]:
+                    if self.__matchTitle(title, sm_entry["title"]):
+                        smitem = self.sm.paper(sm_entry['paperId'])
+                        break
+            except Exception as e:
+                logging.warn("Error sm searchTitle")
+                logging.warn(e)
             #logging.warn("Failed to find Zotero entry for %s" % title)
             self.__updateCachedTitle(title, 'smitem', smitem)
             return self.__makeRefSemanticScholar(smitem)
@@ -417,19 +422,24 @@ class RefExtract:
         i=0
         while i<len(lines):
             line = lines[i].rstrip()
+            #logging.debug(line)
             i+=1
-            if line.startswith('[1] '):
+            if line.startswith('[1]'):
                 started = True
             if started:
+                #logging.debug(line)
                 reftext += line
-            if self.refstop.lower() in line.lower():
+            if started and (self.refstop.lower() in line.lower() or self.refstop2.lower() in line.lower()):
                 break
-        reflines = re.split('(\[\d+\] )', reftext)
+        logging.debug("REFTEXT: %s" % reftext)
+        reflines = re.split('(\[\d+\])', reftext)
         i=0
         refs = {}
         while i<len(reflines)-1:
             line = reflines[i]
+            #logging.debug(line)
             m = P_MATCH_REFIDX.match(line)
+            #logging.debug(m)
             #if line.startswith('['):
             if m:
                 refs[int(m.groups()[0])] = reflines[i+1]
@@ -443,7 +453,7 @@ class RefExtract:
         MIN_RKEY_LEN = 8
         pdf_refs = self.__getReferences(pdfpath)
         refs = {}
-        logging.debug(refkeys)
+        logging.debug("Refkeys: %s" % ", ".join(map(lambda t: "%d" % t, refkeys)))
         for rid, rtext in pdf_refs.items():
             if int(rid) not in refkeys:
                 logging.debug("Skip rid %s" % rid)
